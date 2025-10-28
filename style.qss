@@ -90,6 +90,8 @@
 		color: #fff;
 	}
 
+
+
 	/* style for APP title */
 	#label_2 {
 		padding-right: 10px;

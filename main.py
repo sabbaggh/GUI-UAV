@@ -30,6 +30,10 @@ class MainWindow(QMainWindow):
         self.ui = Ui_window()
         self.ui.setupUi(self)
 
+        # Botones de conexión
+        self.ui.btn_conectar.setStyleSheet("background-color: rgb(255, 240, 133);")
+        self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(255, 240, 133);")
+
         # Crear páginas
         self.tablero_page = page_Tablero()
         self.diagnosticar_page = page_diagnosticar()
@@ -54,6 +58,8 @@ class MainWindow(QMainWindow):
         self.ui.btn_diagnosticar_2.toggled.connect(self.on_btn_diagnosticar_toggled)
         self.ui.btn_estadisticos.toggled.connect(self.on_btn_estadisticos_toggled)
         self.ui.btn_estadisticos_2.toggled.connect(self.on_btn_estadisticos_toggled)
+        self.ui.btn_conectar.toggled.connect(self.on_btn_conectar_toggled)
+        self.ui.btn_conectar_2.toggled.connect(self.on_btn_conectar_toggled)
 
         # Sidebar
         self.ui.short_menu_bar.hide()
@@ -61,7 +67,6 @@ class MainWindow(QMainWindow):
         self.ui.btn_tablero_2.setChecked(True)
 
         self.setWindowTitle("Sistema Detector de Enfermedades Foliares")
-
 
     # Funciones para cambiar de páginas
     def on_btn_tablero_toggled(self):
@@ -75,6 +80,14 @@ class MainWindow(QMainWindow):
     def on_btn_estadisticos_toggled(self):
         if self.ui.btn_estadisticos.isChecked() or self.ui.btn_estadisticos_2.isChecked():
             self.ui.stackedWidget.setCurrentIndex(2)
+
+    # Cuando le picas en conectar
+    def on_btn_conectar_toggled(self):
+        if self.ui.btn_conectar.isChecked() or self.ui.btn_conectar_2.isChecked():
+            self.ui.btn_conectar.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+            self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+            self.ui.btn_conectar.setText("Conectado")
+            self.ui.btn_conectar_2.setText("Conectado")
 
 
 if __name__ == "__main__":
