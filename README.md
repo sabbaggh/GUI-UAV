@@ -12,9 +12,11 @@ Para instalar las dependencias necesarias, ejecuta el siguiente comando:
 
 ```bash
 conda env create -f environment.yml
+```
 
 Todos los iconos deben de estar dentro de una carpeta llamada "icons".
 
 Para su ejecución:
 ```bash
 python main.py
+```
