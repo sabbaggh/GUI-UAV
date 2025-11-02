@@ -146,6 +146,9 @@ class page_diagnosticar(QWidget):
         self.page3 = self.create_page3()
         self.stacked_widget.addWidget(self.page3)
 
+        self.page4 = self.create_page4()
+        self.stacked_widget.addWidget(self.page4)
+
         self.update_page()
 
     # --- PÁGINA 1: MODIFICADA ---
@@ -246,6 +249,10 @@ class page_diagnosticar(QWidget):
         self.web_view2.setHtml(self.get_map_html(), QUrl("qrc:///"))
 
         # Botones
+        btn_regresar = QPushButton("Regresar")
+        btn_regresar.setStyleSheet("background-color: #B2ADA9; color: black;")
+        btn_regresar.clicked.connect(self.come_back_to_step1)
+
         btn_deshacer = QPushButton("Limpiar Selección")
         btn_deshacer.setStyleSheet("background-color: #f44336; color: white;")
         btn_deshacer.clicked.connect(self.clear_perimeter_markers)
@@ -259,6 +266,7 @@ class page_diagnosticar(QWidget):
         btn_siguiente.clicked.connect(self.go_to_step3)
 
         btn_layout = QHBoxLayout()
+        btn_layout.addWidget(btn_regresar)
         btn_layout.addWidget(btn_deshacer)
         btn_layout.addWidget(btn_actualizar)
         btn_layout.addStretch()
@@ -268,6 +276,40 @@ class page_diagnosticar(QWidget):
         return page
 
     def create_page3(self):
+        page = QWidget()
+        # Guarda el layout para poder añadirle cosas después
+        layout = QVBoxLayout(page)
+
+        title = QLabel("Realizando diagnostico!")
+        title.setStyleSheet("font-size: 26px; font-weight: bold;")
+        layout.addWidget(title)
+
+        # 1. Crea el mensaje de "bloqueado"
+        self.locked_label = QLabel("El UAV se encuentra en movimiento.")
+        self.locked_label.setStyleSheet("color: Black; font-size: 20px; font-weight: bold; qproperty-alignment: 'AlignCenter';")
+        n = 0
+        text = QLabel(str(n) + "% monitoreado")
+        text.setStyleSheet("font-size: 16px;")
+        layout.addWidget(text)
+        layout.addWidget(self.locked_label)
+
+        btn_abortar = QPushButton("Abortar operación")
+        btn_abortar.setStyleSheet("background-color: #f44336; color: white;")
+        btn_abortar.clicked.connect(self.abort)
+
+        btn_siguiente = QPushButton("Siguiente")
+        btn_siguiente.setStyleSheet("background-color: #4CAF50; color: white;")
+        btn_siguiente.clicked.connect(self.go_to_step4)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(btn_abortar)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_siguiente)
+        layout.addLayout(btn_layout)
+
+        return page
+
+    def create_page4(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(15, 15, 15, 15)  # Añade un poco de espacio
@@ -295,17 +337,17 @@ class page_diagnosticar(QWidget):
         map_layout = QVBoxLayout(map_frame)
         map_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.web_view3 = QWebEngineView()
-        layout.addWidget(self.web_view3, 1)
+        self.web_view4 = QWebEngineView()
+        layout.addWidget(self.web_view4, 1)
 
         # Puente de comunicación único para este mapa
-        self.bridge3 = Bridge()
-        self.channel3 = QWebChannel()
-        self.channel3.registerObject("bridge", self.bridge3)
-        self.web_view3.page().setWebChannel(self.channel3)
-        self.web_view3.setHtml(self.get_map_html(), QUrl("qrc:///"))
+        self.bridge4 = Bridge()
+        self.channel4 = QWebChannel()
+        self.channel4.registerObject("bridge", self.bridge4)
+        self.web_view4.page().setWebChannel(self.channel4)
+        self.web_view4.setHtml(self.get_map_html(), QUrl("qrc:///"))
 
-        map_layout.addWidget(self.web_view3)
+        map_layout.addWidget(self.web_view4)
         content_layout.addWidget(map_frame, 2)
 
         # --- 2. Panel Derecho: Gráfico y Botones ---
@@ -348,12 +390,12 @@ class page_diagnosticar(QWidget):
         btn_ver_fotos.setIcon(QIcon.fromTheme("camera-photo"))  # Añadir icono
 
         btn_terminar = QPushButton("Terminar")
+        btn_terminar.setStyleSheet("background-color: #4CAF50; color: white;")
         btn_terminar.setObjectName("btnTerminar")  # ID especial para estilo
 
         # Conexiones
-
         #btn_guardar.clicked.connect(lambda: QMessageBox.information(self, "Guardar", "Guardado exitoso"))
-        btn_guardar.clicked.connect(self.auxiliar)
+        btn_guardar.clicked.connect(lambda: QMessageBox.information(self, "Guardar", "Guardando..."))
         btn_imprimir.clicked.connect(lambda: QMessageBox.information(self, "Imprimir", "Imprimiendo..."))
         btn_ver_fotos.clicked.connect(lambda: QMessageBox.information(self, "Ver fotos", "Mostrando fotos..."))
         btn_terminar.clicked.connect(self.reset_diagnostic_ended)
@@ -522,7 +564,7 @@ class page_diagnosticar(QWidget):
 
                 // Capa de satélite
                 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                    attribution: 'Tiles &copy; Esri'
+                    attribution: 'mapa interactuable'
                 }).addTo(map);
 
                 // --- NUEVAS CAPAS ---
@@ -633,16 +675,6 @@ class page_diagnosticar(QWidget):
             self.status_label2.setText("Máximo de 4 puntos alcanzado. Limpie para reiniciar.")
 
 
-    def auxiliar(self):
-        self.web_view3.page().runJavaScript(f"addMarker({self.start_point[0]}, {self.start_point[1]}, 'lightgreen');")
-
-        for p in self.perimeter_points:
-            self.web_view3.page().runJavaScript(f"addMarker({p[0]}, {p[1]}, 'red');")
-        else:
-            points_json = json.dumps(self.perimeter_points)
-            self.web_view3.page().runJavaScript(f"drawPolygon('{points_json}');")
-
-
     # --- MÉTODOS DE LIMPIEZA (SEPARADOS) ---
     def clear_start_point_marker(self):
         self.start_point = (20.432939, -99.598862)  ######### pendiente
@@ -691,7 +723,6 @@ class page_diagnosticar(QWidget):
     def go_to_step2(self):
         if self.start_point is not None:
             self.current_step = 2
-
             lat, lng = self.start_point
             zoom = 18
             self.web_view2.page().runJavaScript(f"map.setView([{lat}, {lng}], {zoom});")
@@ -704,21 +735,36 @@ class page_diagnosticar(QWidget):
     def go_to_step3(self):
         if len(self.perimeter_points) == 4:
             self.current_step = 3
+            self.update_page()
+
+    def go_to_step4(self):
+        if len(self.perimeter_points) == 4:
+            self.current_step = 4
             # Limpiar centrar y marcar mapa
-            self.web_view3.page().runJavaScript("clearMarkers();")
-            self.web_view3.page().runJavaScript(f"map.setView([{self.start_point[0]}, {self.start_point[1]}], {18});")
-            self.web_view3.page().runJavaScript(
+            self.web_view4.page().runJavaScript("clearMarkers();")
+            self.web_view4.page().runJavaScript(f"map.setView([{self.start_point[0]}, {self.start_point[1]}], {18});")
+            self.web_view4.page().runJavaScript(
                 f"addMarker({self.start_point[0]}, {self.start_point[1]}, 'lightgreen');")
             # Marca del área de monitoreo
             for p in self.perimeter_points:
-                self.web_view3.page().runJavaScript(f"addMarker({p[0]}, {p[1]}, 'red');")
+                self.web_view4.page().runJavaScript(f"addMarker({p[0]}, {p[1]}, 'red');")
             else:
                 points_json = json.dumps(self.perimeter_points)
-                self.web_view3.page().runJavaScript(f"drawPolygon('{points_json}');")
+                self.web_view4.page().runJavaScript(f"drawPolygon('{points_json}');")
             self.update_page()
 
         else:
             QMessageBox.warning(self, "Error", "Debes seleccionar exactamente 4 puntos para el perímetro.")
+
+    def come_back_to_step1(self):
+        self.clear_perimeter_markers()
+        self.clear_start_point_marker()
+        self.current_step = 1
+        self.update_page()
+
+    def abort(self):
+        self.current_step = 4
+        self.update_page()
 
     def reset_diagnostic(self):
         self.current_step = 1 if self.conectado else 0
