@@ -164,8 +164,6 @@ class page_diagnosticar(QWidget):
             "color: Black; font-size: 20px; font-weight: bold; qproperty-alignment: 'AlignCenter';")
         self.page1_layout.addWidget(self.locked_label)
 
-
-
         return page
 
 
@@ -602,8 +600,7 @@ class page_diagnosticar(QWidget):
     # --- MANEJADORES DE CLIC (SEPARADOS) ---
     @pyqtSlot(float, float)
     def handle_start_point_map_click(self, lat, lng):
-        if self.start_point is None:
-            self.start_point = (lat, lng)
+        if self.start_point is not None:
             item_text = f"Punto de inicio: ({lat:.5f}, {lng:.5f})"
             self.coord_list_widget1.addItem(item_text)
             self.web_view1.page().runJavaScript(f"addMarker({lat}, {lng}, 'lightgreen');")
@@ -611,7 +608,6 @@ class page_diagnosticar(QWidget):
             self.status_label1.setStyleSheet("color: green; font-size: 19px;")
         else:
             self.status_label1.setText("Solo se puede seleccionar 1 punto. Limpie para reiniciar.")
-
 
     @pyqtSlot(float, float)
     def handle_perimeter_map_click(self, lat, lng):
@@ -689,6 +685,7 @@ class page_diagnosticar(QWidget):
             zoom = 18
             self.web_view1.page().runJavaScript(f"map.setView([{lat}, {lng}], {zoom});")
             self.web_view1.page().runJavaScript(f"addMarker({lat}, {lng}, 'lightgreen');")
+            self.handle_start_point_map_click(lat, lng)
             self.update_page()
 
     def go_to_step2(self):
@@ -722,9 +719,6 @@ class page_diagnosticar(QWidget):
 
         else:
             QMessageBox.warning(self, "Error", "Debes seleccionar exactamente 4 puntos para el perímetro.")
-
-
-
 
     def reset_diagnostic(self):
         self.current_step = 1 if self.conectado else 0
