@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
     QLabel, QSizePolicy
 )
+import time
 
 import sys
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QPushButton, QVBoxLayout,
@@ -23,7 +24,7 @@ from utils import *
 
 
 class MainWindow(QMainWindow):
-    estado_conexion_changed = pyqtSignal(bool)
+    estado_conexion_changed = pyqtSignal(bool, float, float)
 
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -88,13 +89,24 @@ class MainWindow(QMainWindow):
     def on_btn_conectar_toggled(self):
         is_checked = self.ui.btn_conectar.isChecked() or self.ui.btn_conectar_2.isChecked()
         if is_checked:
-            self.ui.btn_conectar.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
-            self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
-            self.ui.btn_conectar_2.setText("Conectado")
-            self.conectado = True
+            ##Aqui se hace la conexion
+            conexion = True
+            ##Regresa las coordenadas
+            lat, long = (19.401036, -99.134668)
+            #######
+            if conexion:
+                self.ui.btn_conectar.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+                self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+                self.ui.btn_conectar_2.setText("Conectado")
+                self.conectado = True
+            else:
+                self.ui.btn_conectar.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+                self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+                self.ui.btn_conectar_2.setText("Intentar nuevamente")
+                self.conectado = False
 
 
-        self.estado_conexion_changed.emit(self.conectado)
+        self.estado_conexion_changed.emit(self.conectado, lat, long)
 
 
 if __name__ == "__main__":

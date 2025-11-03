@@ -15,6 +15,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import io
 import folium
 from design import Ui_window
+import time
 
 
 
@@ -627,18 +628,24 @@ class page_diagnosticar(QWidget):
                     markerLayer.clearLayers();
                     polygonLayer.clearLayers();
                 }
+
+                function updateCenter(lat, lng) {
+                    map.setView([lat, lng]);
+                }
             </script>
         </body>
         </html>
         """
 
-    @pyqtSlot(bool)
-    def set_estado_conexion(self, conectado):
+    @pyqtSlot(bool, float, float)
+    def set_estado_conexion(self, conectado, lat, long):
         """
         Este es el SLOT que recibe la señal desde MainWindow.
         """
+        self.coordenadas_iniciales = (lat, long)  
         self.conectado = conectado
-        self.go_to_step1()
+        if conectado:
+            self.go_to_step1()
 
     # --- MANEJADORES DE CLIC (SEPARADOS) ---
     @pyqtSlot(float, float)
@@ -678,7 +685,7 @@ class page_diagnosticar(QWidget):
 
     # --- MÉTODOS DE LIMPIEZA (SEPARADOS) ---
     def clear_start_point_marker(self):
-        self.start_point = (20.432939, -99.598862)  ######### pendiente
+        self.start_point = self.coordenadas_iniciales  ######### pendiente
         self.coord_list_widget1.clear()
         self.web_view1.page().runJavaScript("clearMarkers();")
         self.status_label1 = QLabel("Ubicación actual del UAV.")
@@ -712,7 +719,7 @@ class page_diagnosticar(QWidget):
     def go_to_step1(self):
         if self.conectado:
             self.current_step = 1
-            self.coordenadas_iniciales = (20.432939, -99.598862)  ######### pendiente
+            #self.coordenadas_iniciales = (20.432939, -99.598862)  ######### pendiente
             lat, lng = self.coordenadas_iniciales
             self.start_point = (lat, lng)
             zoom = 18
