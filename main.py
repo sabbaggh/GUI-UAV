@@ -22,6 +22,19 @@ import folium
 from design import Ui_window
 from utils import *
 
+from utils_connection import obtener_gps_ssh
+
+##Varaibles de conexion CAMBIARLAS CUANDO SE TRATE DE LA RASPBERRY
+#Ip de tailscale del dispositivo
+TAILSCALE_IP = "100.104.54.62"
+#Nombre de usuario con el que se inicia sesion en el otro dispositivo
+USERNAME = "juanincho"
+#Contrasena
+PASSWORD = "2314"
+
+##Ruta CAMBIAR CUANDO SEA CON RASPBERRY
+RUTA = "/home/juanincho/Documents/GitHub/proyecto_drone/"
+
 
 class MainWindow(QMainWindow):
     estado_conexion_changed = pyqtSignal(bool, float, float)
@@ -89,24 +102,26 @@ class MainWindow(QMainWindow):
     def on_btn_conectar_toggled(self):
         is_checked = self.ui.btn_conectar.isChecked() or self.ui.btn_conectar_2.isChecked()
         if is_checked:
+            comando = "bash -lc 'source "+ RUTA + "venv/bin/activate && python3 -u " + RUTA + "obtener_coordenadas.py'"
+            #print(comando)
             ##Aqui se hace la conexion
-            conexion = True
-            ##Regresa las coordenadas
-            lat, long = (19.401036, -99.134668)
-            #######
-            if conexion:
+            lat, long = obtener_gps_ssh(TAILSCALE_IP, USERNAME, PASSWORD, comando)
+            #######Comprobar que se hayan obtenido las coordenadas correctamente
+            if lat is not None and long is not None:
                 self.ui.btn_conectar.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
                 self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
                 self.ui.btn_conectar_2.setText("Conectado")
                 self.conectado = True
+                self.estado_conexion_changed.emit(self.conectado, lat, long)
             else:
-                self.ui.btn_conectar.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
-                self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(49, 201, 80); color: white")
+                self.ui.btn_conectar.setStyleSheet("background-color: rgb(201, 49, 49); color: white")
+                self.ui.btn_conectar_2.setStyleSheet("background-color: rgb(201, 49, 49); color: white")
                 self.ui.btn_conectar_2.setText("Intentar nuevamente")
                 self.conectado = False
+                self.estado_conexion_changed.emit(self.conectado, 0, 0)
 
 
-        self.estado_conexion_changed.emit(self.conectado, lat, long)
+        #self.estado_conexion_changed.emit(self.conectado, lat, long)
 
 
 if __name__ == "__main__":
