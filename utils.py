@@ -1,6 +1,6 @@
 import json
 from PyQt5 import QtCore, QtGui
-from PyQt5.QtCore import Qt, pyqtSlot, QPointF, QRectF, QTimer, QFile, QTextStream, QUrl, QObject, pyqtSignal, QIODevice
+from PyQt5.QtCore import Qt, pyqtSlot, QPointF, QRectF, QTimer, QFile, QTextStream, QUrl, QObject, pyqtSignal, QIODevice,QThread
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QPen, QPolygonF, QIcon, QBrush, QFont
 import numpy as np
 import sys
@@ -35,7 +35,61 @@ RUTA = "/home/pera/"
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+class SshWorker(QObject):
+    """
+    Worker que corre en un hilo separado para manejar la conexión SSH
+    y la ejecución de scripts sin bloquear la GUI.
+    """
+    # Señales para comunicarse con la página principal
+    finished = pyqtSignal(str, str)  # (stdout, stderr)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(str)       # Para enviar actualizaciones de estado
 
+    @pyqtSlot(str)
+    def run_ssh_command(self, json_payload):
+        """
+        Este es el método que se ejecuta en el hilo secundario.
+        """
+        try:
+            # Re-inicializa el cliente DENTRO del hilo
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            self.progress.emit("Conectando al UAV...")
+            client.connect(TAILSCALE_IP, username=USERNAME, password=PASSWORD, timeout=10)
+            
+            self.progress.emit("Ejecutando script de monitoreo...")
+            cmd = f"bash -lc 'source /home/pera/venv_drone/bin/activate && python3 -u /home/pera/xdd2.py'"
+            stdin, stdout, stderr = client.exec_command(cmd, get_pty=False)
+
+            # Enviar JSON
+            stdin.write(json_payload)
+            stdin.flush()
+            stdin.channel.shutdown_write()
+
+            # Leer la salida línea por línea
+            out_lines = []
+            for line in iter(stdout.readline, ""):
+                line = line.strip()
+                if not line:
+                    continue # Ignora líneas vacías
+                
+                # Emite CUALQUIER línea (sea de estado o %) como progreso
+                self.progress.emit(line) 
+                
+                out_lines.append(line)
+            
+            out = "\n".join(out_lines)
+            err = stderr.read().decode('utf-8')
+            
+            self.progress.emit("Script finalizado.")
+            self.finished.emit(out, err)
+
+        except Exception as e:
+            self.error.emit(f"Error de conexión o ejecución: {str(e)}")
+        finally:
+            client.close()
+            self.progress.emit("Conexión cerrada.")
 
 class Bridge(QObject):
     # Signal to send the clicked coordinates to the main window
@@ -136,14 +190,41 @@ class page_Tablero(QWidget):
 
 # --- PÁGINA DIAGNOSTICAR ---
 class page_diagnosticar(QWidget):
+    # --- AÑADE ESTA SEÑAL ---
+    # Señal para iniciar el trabajo de SSH desde el hilo principal
+    start_ssh = pyqtSignal(str) 
+
     def __init__(self):
         super().__init__()
         self.current_step = 0
         self.conectado = False
 
-        # Listas para guardar las coordenadas de cada paso
-        self.perimeter_points = []  # Para los 4 puntos de la página 1
-        self.start_point = None  # Para el punto único de la página 2
+        self.perimeter_points = []
+        self.start_point = None
+
+        # --- AÑADE ESTO: Configuración del Hilo y Worker ---
+        self.ssh_thread = QThread(self)
+        self.ssh_worker = SshWorker()
+        
+        # Mover el worker al hilo
+        self.ssh_worker.moveToThread(self.ssh_thread)
+
+        # Conectar señales y slots
+        # 1. Iniciar el trabajo cuando emitamos 'start_ssh'
+        self.start_ssh.connect(self.ssh_worker.run_ssh_command)
+
+        # 2. Recibir los resultados cuando el worker termine
+        self.ssh_worker.finished.connect(self.on_ssh_finished)
+        self.ssh_worker.error.connect(self.on_ssh_error)
+        self.ssh_worker.progress.connect(self.on_ssh_progress)
+
+        # 3. Limpieza: Asegurarse de que el hilo se cierre
+        self.ssh_thread.finished.connect(self.ssh_worker.deleteLater)
+        # (Asegúrate de llamar a self.ssh_thread.quit() cuando cierres la app)
+
+        # Iniciar el hilo (estará esperando señales)
+        self.ssh_thread.start()
+        # --- FIN DE LA SECCIÓN AÑADIDA ---
 
         self.initUI()
 
@@ -296,34 +377,40 @@ class page_diagnosticar(QWidget):
 
     def create_page3(self):
         page = QWidget()
-        # Guarda el layout para poder añadirle cosas después
         layout = QVBoxLayout(page)
 
         title = QLabel("Realizando diagnostico!")
         title.setStyleSheet("font-size: 26px; font-weight: bold;")
         layout.addWidget(title)
 
-        # 1. Crea el mensaje de "bloqueado"
-        self.locked_label = QLabel("El UAV se encuentra en movimiento.")
-        self.locked_label.setStyleSheet("color: Black; font-size: 20px; font-weight: bold; qproperty-alignment: 'AlignCenter';")
-        n = 0
-        text = QLabel(str(n) + "% monitoreado")
-        text.setStyleSheet("font-size: 16px;")
-        layout.addWidget(text)
-        layout.addWidget(self.locked_label)
+        # --- MODIFICADO ---
+        # Dales nombres con 'self.'
+        self.progress_status_label = QLabel("Iniciando conexión...")
+        self.progress_status_label.setStyleSheet("color: Black; font-size: 20px; font-weight: bold; qproperty-alignment: 'AlignCenter';")
+        
+        self.progress_percent_label = QLabel("0% monitoreado")
+        self.progress_percent_label.setStyleSheet("font-size: 16px;")
+        
+        layout.addWidget(self.progress_percent_label)
+        layout.addWidget(self.progress_status_label)
+        # --- FIN MODIFICADO ---
 
         btn_abortar = QPushButton("Abortar operación")
         btn_abortar.setStyleSheet("background-color: #f44336; color: white;")
-        btn_abortar.clicked.connect(self.abort)
+        btn_abortar.clicked.connect(self.abort) # (Nota: Abortar un hilo requiere más lógica)
 
-        btn_siguiente = QPushButton("Siguiente")
-        btn_siguiente.setStyleSheet("background-color: #4CAF50; color: white;")
-        btn_siguiente.clicked.connect(self.go_to_step4)
+        # --- MODIFICADO ---
+        # Dale un nombre al botón y deshabilítalo al inicio
+        self.btn_page3_siguiente = QPushButton("Siguiente")
+        self.btn_page3_siguiente.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.btn_page3_siguiente.clicked.connect(self.go_to_step4)
+        self.btn_page3_siguiente.setEnabled(False) # <--- Deshabilitado
+        # --- FIN MODIFICADO ---
 
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(btn_abortar)
         btn_layout.addStretch()
-        btn_layout.addWidget(btn_siguiente)
+        btn_layout.addWidget(self.btn_page3_siguiente) # Usamos la variable de 'self'
         layout.addLayout(btn_layout)
 
         return page
@@ -761,23 +848,29 @@ class page_diagnosticar(QWidget):
             QMessageBox.warning(self, "Error", "Debes seleccionar un punto de despegue.")
 
     def go_to_step3(self):
-        coordenadas_manuales = [(18.888597, -99.023020),(18.888596, -99.022982),(18.888565, -99.023013),(18.888569, -99.022972)]
+        # (Tu coordenada manual no se usa, la he comentado)
+        # coordenadas_manuales = [(18.888597, -99.023020),(18.888596, -99.022982),(18.888565, -99.023013),(18.888569, -99.022972)]
+        
         if len(self.perimeter_points) == 4:
+            # 1. Cambia de página INMEDIATAMENTE. Esto ahora funciona.
             self.current_step = 3
             self.update_page()
+            
+            # 2. Resetea el estado de la página 3
+            self.btn_page3_siguiente.setEnabled(False)
+            self.progress_status_label.setText("Preparando script...")
+            self.progress_percent_label.setText("0%")
+
+            # 3. Prepara los datos
             json_payload = json.dumps(self.perimeter_points)
-            cmd = f"bash -lc 'source /home/pera/venv_drone/bin/activate && python3 -u /home/pera/xdd2.py'"
-            client.connect(TAILSCALE_IP, username=USERNAME, password=PASSWORD)
-            stdin, stdout, stderr = client.exec_command(cmd, get_pty=False)
-
-            # enviar JSON y cerrar stdin para indicar EOF
-            stdin.write(json_payload)
-            stdin.flush()
-            stdin.channel.shutdown_write()
-
-            # leer salida (bloqueante hasta que el proceso termine)
-            out = stdout.read().decode('utf-8')
-            err = stderr.read().decode('utf-8')
+            
+            # 4. Emite la señal para que el worker (en el otro hilo) comience.
+            #    La GUI NO se bloqueará.
+            self.start_ssh.emit(json_payload)
+            
+            # (Se eliminó todo el código bloqueante de paramiko)
+        else:
+            QMessageBox.warning(self, "Error", "Debes seleccionar 4 puntos.")
 
 
     def go_to_step4(self):
@@ -822,6 +915,49 @@ class page_diagnosticar(QWidget):
 
     def update_page(self):
         self.stacked_widget.setCurrentIndex(self.current_step)
+
+    # --- AÑADE ESTOS 3 MÉTODOS NUEVOS ---
+
+    @pyqtSlot(str)
+    def on_ssh_progress(self, message):
+        """
+        Este slot se activa cada vez que el worker emite 'progress'.
+        Ahora distingue entre mensajes de estado y de porcentaje.
+        """
+        if "%" in message:
+            # Es un mensaje de porcentaje
+            self.progress_percent_label.setText(message)
+        elif "success" not in message and "error" not in message: 
+            # Es un mensaje de estado (e ignoramos el JSON final)
+            # (Asumiendo que tus mensajes de estado no contienen la palabra "success")
+            self.progress_status_label.setText(message)
+
+    @pyqtSlot(str, str)
+    def on_ssh_finished(self, out, err):
+        """
+        Este slot se activa CUANDO el script termina exitosamente.
+        """
+        self.progress_status_label.setText("¡Diagnóstico completado!")
+        self.progress_percent_label.setText("100% monitoreado")
+        
+        # Habilita el botón "Siguiente"
+        self.btn_page3_siguiente.setEnabled(True)
+        
+        # (Opcional) Puedes imprimir la salida para depurar
+        print("--- SALIDA DEL SCRIPT ---")
+        print(out)
+        if err:
+            print("--- ERRORES DEL SCRIPT ---")
+            print(err)
+
+    @pyqtSlot(str)
+    def on_ssh_error(self, error_message):
+        """
+        Este slot se activa si el worker falla (ej. error de conexión).
+        """
+        QMessageBox.critical(self, "Error de Diagnóstico", error_message)
+        # Enviamos al usuario de vuelta al paso 1
+        self.come_back_to_step1()
            
 
 
