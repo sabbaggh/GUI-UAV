@@ -12,10 +12,10 @@ def obtener_gps_ssh(host, username, password, command):
         stdin, stdout, stderr = ssh.exec_command(command)
         print("okay")
         salida = stdout.read().decode().strip()
+        print(salida)
         ssh.close()
 
         lat_str, lon_str = salida.split()
-        print("xddd")
         return float(lat_str), float(lon_str)
     
     except Exception as e:

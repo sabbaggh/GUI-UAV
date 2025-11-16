@@ -6,7 +6,7 @@ import numpy as np
 import sys
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QPushButton, QVBoxLayout, QStackedWidget, QSizePolicy,
                              QGraphicsScene, QGraphicsEllipseItem, QHBoxLayout, QLabel, QWidget, QFrame, QListWidget,
-                             QScrollArea, QMessageBox, QGraphicsView, QGraphicsPixmapItem, QUndoStack, QUndoCommand)
+                             QScrollArea, QMessageBox, QGraphicsView, QGraphicsPixmapItem, QUndoStack, QUndoCommand,QFileDialog)
 
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView
@@ -18,6 +18,8 @@ from design import Ui_window
 import time
 import paramiko
 import json
+import os         # Para manejar rutas de archivos locales
+import posixpath  # Para manejar rutas de archivos remotas (en la Pi)
 
 
 ##Varaibles de conexion CAMBIARLAS CUANDO SE TRATE DE LA RASPBERRY
@@ -34,6 +36,63 @@ RUTA = "/home/pera/"
 # Initialize SSH client
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+
+class SftpWorker(QObject):
+    """
+    Worker que corre en un hilo separado para descargar archivos vía SFTP
+    sin bloquear la GUI.
+    """
+    # Señales
+    progress = pyqtSignal(str)       # (mensaje de progreso)
+    finished = pyqtSignal()          # (descarga completada)
+    error = pyqtSignal(str)          # (error)
+
+    @pyqtSlot(str, str)
+    def download_files(self, remote_dir, local_dir):
+        """
+        Descarga todos los archivos .jpg y .png de un directorio remoto.
+        """
+        try:
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            self.progress.emit("Conectando para transferencia de archivos...")
+            client.connect(TAILSCALE_IP, username=USERNAME, password=PASSWORD, timeout=10)
+            
+            sftp = client.open_sftp()
+            self.progress.emit(f"Accediendo a: {remote_dir}")
+            
+            files = sftp.listdir(remote_dir)
+            
+            # Filtra solo por imágenes
+            images = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            
+            if not images:
+                self.error.emit("No se encontraron imágenes en el directorio.")
+                sftp.close()
+                client.close()
+                return
+
+            total_images = len(images)
+            for i, fname in enumerate(images):
+                self.progress.emit(f"Descargando {fname} ({i+1}/{total_images})...")
+                
+                remote_path = posixpath.join(remote_dir, fname)
+                local_path = os.path.join(local_dir, fname)
+                
+                sftp.get(remote_path, local_path)
+
+            sftp.close()
+            client.close()
+            self.progress.emit("¡Descarga completada!")
+            self.finished.emit()
+
+        except Exception as e:
+            self.error.emit(f"Error de SFTP: {str(e)}")
+        finally:
+            if 'client' in locals() and client.get_transport() is not None:
+                client.close()
 
 class SshWorker(QObject):
     """
@@ -59,7 +118,7 @@ class SshWorker(QObject):
             client.connect(TAILSCALE_IP, username=USERNAME, password=PASSWORD, timeout=10)
             
             self.progress.emit("Ejecutando script de monitoreo...")
-            cmd = f"bash -lc 'source /home/pera/venv_drone/bin/activate && python3 -u /home/pera/xdd2.py'"
+            cmd = f"bash -lc 'source /home/pera/venv_drone/bin/activate && python3 -u /home/pera/xdd3.py'"
             stdin, stdout, stderr = client.exec_command(cmd, get_pty=False)
 
             # Enviar JSON
@@ -192,10 +251,15 @@ class page_Tablero(QWidget):
 class page_diagnosticar(QWidget):
     # --- AÑADE ESTA SEÑAL ---
     # Señal para iniciar el trabajo de SSH desde el hilo principal
-    start_ssh = pyqtSignal(str) 
+    start_ssh = pyqtSignal(str)
+    start_sftp_download = pyqtSignal(str, str)
 
     def __init__(self):
         super().__init__()
+
+        self.PREDEFINED_SAVE_PATH = os.path.join(os.path.expanduser("~"), "Drone_Mission_Photos")
+        self.PREDEFINED_REMOTE_PATH = "/home/pera/Downloads/photos/photo_path"
+
         self.current_step = 0
         self.conectado = False
 
@@ -224,6 +288,21 @@ class page_diagnosticar(QWidget):
 
         # Iniciar el hilo (estará esperando señales)
         self.ssh_thread.start()
+        # --- FIN DE LA SECCIÓN AÑADIDA ---
+
+        # --- AÑADE ESTO: Configuración del Hilo y Worker SFTP ---
+        self.sftp_thread = QThread(self)
+        self.sftp_worker = SftpWorker()
+        self.sftp_worker.moveToThread(self.sftp_thread)
+
+        # Conectar señales y slots
+        self.start_sftp_download.connect(self.sftp_worker.download_files)
+        self.sftp_worker.progress.connect(self.on_download_progress)
+        self.sftp_worker.finished.connect(self.on_download_complete)
+        self.sftp_worker.error.connect(self.on_ssh_error) # Podemos reusar el slot de error
+
+        # Iniciar el hilo SFTP
+        self.sftp_thread.start()
         # --- FIN DE LA SECCIÓN AÑADIDA ---
 
         self.initUI()
@@ -874,23 +953,31 @@ class page_diagnosticar(QWidget):
 
 
     def go_to_step4(self):
-        if len(self.perimeter_points) == 4:
-            self.current_step = 4
-            # Limpiar centrar y marcar mapa
-            self.web_view4.page().runJavaScript("clearMarkers();")
-            self.web_view4.page().runJavaScript(f"map.setView([{self.start_point[0]}, {self.start_point[1]}], {18});")
-            self.web_view4.page().runJavaScript(
-                f"addMarker({self.start_point[0]}, {self.start_point[1]}, 'lightgreen');")
-            # Marca del área de monitoreo
-            for p in self.perimeter_points:
-                self.web_view4.page().runJavaScript(f"addMarker({p[0]}, {p[1]}, 'red');")
-            else:
-                points_json = json.dumps(self.perimeter_points)
-                self.web_view4.page().runJavaScript(f"drawPolygon('{points_json}');")
-            self.update_page()
+        """
+        Este método inicia la descarga desde la RUTA REMOTA predefinida
+        hacia la RUTA LOCAL predefinida.
+        """
+        # 1. Obtiene ambas rutas predefinidas
+        local_save_dir = self.PREDEFINED_SAVE_PATH
+        remote_save_dir = self.PREDEFINED_REMOTE_PATH # <-- Usa la nueva variable
+        
+        # (El 'if not self.remote_photos_dir:' ya no es necesario)
 
-        else:
-            QMessageBox.warning(self, "Error", "Debes seleccionar exactamente 4 puntos para el perímetro.")
+        # 2. Asegúrate de que el directorio local exista
+        try:
+            # os.makedirs con exist_ok=True es como "mkdir -p"
+            os.makedirs(local_save_dir, exist_ok=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error de Directorio", f"No se pudo crear la carpeta local: {local_save_dir}\nError: {e}")
+            return
+            
+        # 3. Inicia la descarga
+        self.progress_status_label.setText(f"Descargando de {remote_save_dir}...")
+        self.progress_percent_label.setText("") # Limpiar porcentaje
+        self.btn_page3_siguiente.setEnabled(False) # Deshabilitar botón durante la descarga
+        
+        # 4. Emite la señal con AMBAS rutas predefinidas
+        self.start_sftp_download.emit(remote_save_dir, local_save_dir)
 
     def come_back_to_step1(self):
         self.clear_perimeter_markers()
@@ -915,6 +1002,29 @@ class page_diagnosticar(QWidget):
 
     def update_page(self):
         self.stacked_widget.setCurrentIndex(self.current_step)
+
+    def _show_page_4(self):
+        """
+        Esta función contiene la LÓGICA ORIGINAL de tu go_to_step4.
+        Se encarga de preparar y mostrar la página 4.
+        """
+        if len(self.perimeter_points) == 4:
+            self.current_step = 4
+            # Limpiar, centrar y marcar mapa
+            self.web_view4.page().runJavaScript("clearMarkers();")
+            self.web_view4.page().runJavaScript(f"map.setView([{self.start_point[0]}, {self.start_point[1]}], {18});")
+            self.web_view4.page().runJavaScript(
+                f"addMarker({self.start_point[0]}, {self.start_point[1]}, 'lightgreen');")
+            # Marca del área de monitoreo
+            for p in self.perimeter_points:
+                self.web_view4.page().runJavaScript(f"addMarker({p[0]}, {p[1]}, 'red');")
+            else:
+                points_json = json.dumps(self.perimeter_points)
+                self.web_view4.page().runJavaScript(f"drawPolygon('{points_json}');")
+            
+            self.update_page() # <-- Esto cambia a la página 4
+        else:
+             QMessageBox.warning(self, "Error", "Debes seleccionar exactamente 4 puntos para el perímetro.")
 
     # --- AÑADE ESTOS 3 MÉTODOS NUEVOS ---
 
@@ -958,6 +1068,26 @@ class page_diagnosticar(QWidget):
         QMessageBox.critical(self, "Error de Diagnóstico", error_message)
         # Enviamos al usuario de vuelta al paso 1
         self.come_back_to_step1()
+    
+    @pyqtSlot(str)
+    def on_download_progress(self, message):
+        """
+        Se activa con el worker SFTP para actualizar el estado.
+        """
+        self.progress_status_label.setText(message)
+
+    @pyqtSlot()
+    def on_download_complete(self):
+        """
+        Se activa CUANDO el worker SFTP termina.
+        Ahora, finalmente, vamos a la página 4.
+        """
+        self.progress_status_label.setText("¡Descarga completa!")
+        # Re-habilita el botón por si acaso
+        self.btn_page3_siguiente.setEnabled(True) 
+        
+        # Ahora sí, vamos a la página de resultados
+        self._show_page_4()
            
 
 
